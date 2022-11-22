@@ -1,0 +1,5 @@
+name: BigBrother
+author: BigBrother
+main: BigBrother\BigBrother
+version: 0.0.1-PRE_RELEASE
+api: 4.0.0

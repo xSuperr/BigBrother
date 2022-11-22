@@ -1,0 +1,274 @@
+<?php
+
+declare(strict_types=1);
+
+namespace BigBrother\network\packet;
+
+use BigBrother\network\binary\JavaBinaryStream;
+use pocketmine\item\Item;
+use pocketmine\item\ItemFactory;
+use pocketmine\item\VanillaItems;
+use pocketmine\network\mcpe\protocol\types\inventory\ItemStack;
+use pocketmine\network\mcpe\protocol\types\inventory\ItemStackWrapper;
+use stdClass;
+
+abstract class JavaPacket extends stdClass
+{
+    protected string $buffer;
+    protected int $offset = 0;
+
+    public function write(): string
+    {
+        $this->buffer = "";
+        $this->offset = 0;
+        $this->encode();
+        return JavaBinaryStream::writeJavaVarInt($this->pid()) . $this->buffer;
+    }
+
+    protected abstract function encode(): void;
+
+    public abstract function pid(): int;
+
+    public function read(string $buffer, int $offset = 0): void
+    {
+        $this->buffer = $buffer;
+        $this->offset = $offset;
+        $this->decode();
+    }
+
+    protected abstract function decode(): void;
+
+    protected function getInt(): int
+    {
+        return JavaBinarystream::readInt($this->get(4));
+    }
+
+    protected function get($len): string
+    {
+        if ($len < 0) {
+            $this->offset = strlen($this->buffer) - 1;
+
+            return "";
+        } elseif ($len === true) {
+            return substr($this->buffer, $this->offset);
+        }
+
+        $buffer = "";
+        for (; $len > 0; --$len, ++$this->offset) {
+            $buffer .= @$this->buffer[$this->offset];
+        }
+
+        return $buffer;
+    }
+
+    protected function getPosition(int &$x = null, int &$y = null, int &$z = null): void
+    {
+        $long = $this->getLong();
+        $x = $long >> 38;
+        $y = $long & 0xFFF;
+        $z = ($long << 26 >> 38);
+    }
+
+    protected function getLong(): int
+    {
+        return JavaBinarystream::readLong($this->get(8));
+    }
+
+    protected function getFloat(): float
+    {
+        return JavaBinarystream::readFloat($this->get(4));
+    }
+
+    protected function getDouble(): float
+    {
+        return JavaBinarystream::readDouble($this->get(8));
+    }
+
+    protected function getSlot(): Item
+    {
+        $hasItem = $this->getBool();
+        if ($hasItem === false) { //Empty
+            return VanillaItems::AIR();
+        } else {
+
+            $id = $this->getVarInt();
+            $count = $this->getByte();//count or damage
+            $nbt = $this->get(true);//getNbt
+
+            //var_dump($id.",".$count);
+
+            // $item = new ComputerItem($id);
+            // if($item instanceof Durable){
+            // 	$item->setDamage($count);
+            // }else{
+            // 	$item->setCount($count);
+            // }
+            $item = ItemFactory::getInstance()->get(0, 0, 0);
+            //$itemNBT = ConvertUtils::convertNBTDataFromPCtoPE($nbt);
+            //var_dump($itemNBT);
+            //$item->setCompoundTag($itemNBT);
+
+            //ConvertUtils::convertItemData(false, $item);
+
+            return $item;
+        }
+    }
+
+    protected function getBool(): bool
+    {
+        return $this->get(1) !== "\x00";
+    }
+
+    protected function getVarInt(): int
+    {
+        return JavaBinarystream::readJavaVarInt($this->buffer, $this->offset);
+    }
+
+    protected function getByte(): int
+    {
+        return ord($this->buffer[$this->offset++]);
+    }
+
+    protected function putSlot($item): void
+    {
+        if ($item instanceof ItemStackWrapper) {
+            $item = $item->getItemStack();
+        }
+        if ($item instanceof ItemStack) {
+            //ConvertUtils::convertItemData(true, $item);
+
+            $this->putBool($item !== null);
+            if ($item !== null) {
+                $this->putVarInt(0);//id
+                $this->putByte($item->getCount());//count
+                if ($item->getNbt() !== null) {
+                    $itemNBT = clone $item->getNbt();
+                    //$this->put(ConvertUtils::convertNBTDataFromPEtoPC($itemNBT));
+                } else {
+                    $this->put("\x00");//TAG_End
+                }
+            }
+        }
+
+    }
+
+    protected function putBool(bool $v): void
+    {
+        $this->buffer .= ($v ? "\x01" : "\x00");
+    }
+
+    protected function putVarInt(int $v): void
+    {
+        $this->buffer .= JavaBinarystream::writeJavaVarInt($v);
+    }
+
+    protected function putByte(int $v): void
+    {
+        $this->buffer .= chr($v);
+    }
+
+    protected function put(string $str): void
+    {
+        $this->buffer .= $str;
+    }
+
+    protected function getShort(): int
+    {
+        return JavaBinarystream::readShort($this->get(2));
+    }
+
+    protected function getSignedShort(): int
+    {
+        return JavaBinarystream::readSignedShort($this->get(2));
+    }
+
+    protected function getTriad(): int
+    {
+        return JavaBinarystream::readTriad($this->get(3));
+    }
+
+    protected function getLTriad(): int
+    {
+        return JavaBinarystream::readTriad(strrev($this->get(3)));
+    }
+
+    protected function getSignedByte(): int
+    {
+        return ord($this->buffer[$this->offset++]) << 56 >> 56;
+    }
+
+    protected function getAngle(): float
+    {
+        return $this->getByte() * 360 / 256;
+    }
+
+    protected function getString(): string
+    {
+        return $this->get($this->getVarInt());
+    }
+
+    protected function feof(): bool
+    {
+        return !isset($this->buffer[$this->offset]);
+    }
+
+    protected function putInt(int $v): void
+    {
+        $this->buffer .= JavaBinarystream::writeInt($v);
+    }
+
+    protected function putPosition(int $x, int $y, int $z): void
+    {
+        $long = (($x & 0x3FFFFFF) << 38) | (($z & 0x3FFFFFF) << 12) | ($y & 0xFFF);
+        $this->putLong($long);
+    }
+
+    protected function putLong(int $v): void
+    {
+        $this->buffer .= JavaBinarystream::writeLong($v);
+    }
+
+    protected function putFloat(float $v): void
+    {
+        $this->buffer .= JavaBinarystream::writeFloat($v);
+    }
+
+    protected function putDouble(float $v): void
+    {
+        $this->buffer .= JavaBinarystream::writeDouble($v);
+    }
+
+    protected function putShort(int $v): void
+    {
+        $this->buffer .= JavaBinarystream::writeShort($v);
+    }
+
+    protected function putTriad(int $v): void
+    {
+        $this->buffer .= JavaBinarystream::writeTriad($v);
+    }
+
+    protected function putLTriad(int $v): void
+    {
+        $this->buffer .= strrev(JavaBinarystream::writeTriad($v));
+    }
+
+    protected function putAngle(float $v): void
+    {
+        $this->putByte((int)round($v * 256 / 360));
+    }
+
+    protected function putString(string $v): void
+    {
+        $this->putVarInt(strlen($v));
+        $this->put($v);
+    }
+
+    protected function putBitSet(array $v): void
+    {
+        $this->putVarInt(count($v));
+        foreach($v as $content){
+            $this->putLong($content);
+        }
+    }
+}
